@@ -8,6 +8,9 @@ pub enum LanQRusError {
 	#[error("Noise protocol error: {0}")]
 	Noise(#[from] snow::Error),
 
+	#[error("Secure connection is no longer usable")]
+	ConnectionClosed,
+
 	#[error("verification code does not match")]
 	VerificationFailed,
 
