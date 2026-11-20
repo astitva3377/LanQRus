@@ -1,6 +1,7 @@
 use crate::error::LanQRusError;
 use crate::protocol::{
-	APPROVAL_MESSAGE, ControlMessage, REJECTION_MESSAGE,
+	APPROVAL_MESSAGE, ControlMessage,
+	REJECTION_ACK_MESSAGE, REJECTION_MESSAGE,
 	decode_control_message,
 };
 use crate::stream::SecureStream;
@@ -98,18 +99,25 @@ where
 			let response = connection.receive().await?;
 
 			match decode_control_message(&response) {
-				Some(ControlMessage::APPROVE)
+				Some(ControlMessage::Approve)
 					if matches =>
 				{
 					Ok(())
 				}
 
-				Some(ControlMessage::APPROVE) => {
+				Some(ControlMessage::Approve) => {
 					Err(LanQRusError::VerificationFailed)
 				}
 
-				Some(ControlMessage::REJECT) => {
+				Some(ControlMessage::Reject) => {
+					connection
+						.send(&REJECTION_ACK_MESSAGE)
+						.await?;
 					Err(LanQRusError::PeerRejected)
+				}
+
+				Some(ControlMessage::RejectAck) => {
+					Err(LanQRusError::InvalidApproval)
 				}
 
 				None => Err(LanQRusError::InvalidApproval),
@@ -127,7 +135,22 @@ where
 		let connection =
 			SecureStream::new(self.stream, self.transport);
 		connection.send(&REJECTION_MESSAGE).await?;
-		Ok(())
+
+		let peer_decision = connection.receive().await?;
+
+		match decode_control_message(&peer_decision) {
+			Some(ControlMessage::Approve)
+			| Some(ControlMessage::Reject) => {}
+
+			_ => return Err(LanQRusError::InvalidApproval),
+		}
+
+		let ack = connection.receive().await?;
+
+		match decode_control_message(&ack) {
+			Some(ControlMessage::RejectAck) => Ok(()),
+			_ => Err(LanQRusError::InvalidApproval),
+		}
 	}
 }
 

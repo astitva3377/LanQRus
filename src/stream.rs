@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 const TAG_SIZE: usize = 16;
 
+#[derive(Debug)]
 pub struct SecureStream<S> {
 	reader: Mutex<ReadHalf<S>>,
 	writer: Mutex<WriteHalf<S>>,
@@ -75,7 +76,8 @@ where
 		let ciphertext = {
 			let mut reader = self.reader.lock().await;
 
-			let header = [0u8; 2];
+			let mut header = [0u8; 2];
+			reader.read_exact(&mut header).await?;
 
 			let length =
 				u16::from_be_bytes(header) as usize;
