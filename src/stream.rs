@@ -1,3 +1,28 @@
+/// An encrypted, message-oriented connection.
+///
+/// `SecureStream` wraps an asynchronous byte stream and provides
+/// authenticated encryption using Noise transport mode.
+///
+/// Each call to [`send`](Self::send) transmits one message.
+/// Each call to [`receive`](Self::receive) returns one message.
+///
+/// The underlying stream can be TCP, a Unix socket, or another
+/// compatible asynchronous byte stream.
+///
+/// # Concurrency
+///
+/// Multiple tasks may share a `SecureStream` through `Arc`.
+/// Concurrent sends are serialized. Concurrent receives are also
+/// serialized, but which waiting receiver gets the next message
+/// is not guaranteed.
+///
+/// # Connection lifecycle
+///
+/// A connection becomes unusable after a fatal I/O error,
+/// authentication failure, or cancellation during an operation
+/// that may have modified or consumed a frame.
+///
+/// Calling [`close`](Self::close) prevents further communication.
 use crate::error::LanQRusError;
 use snow::TransportState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -98,7 +123,12 @@ where
 		Ok(())
 	}
 
-	/// Close the connection and wake operations waiting for network data.
+	/// Closes the connection.
+	///
+	/// Prevents new sends, wakes pending receives, and shuts down
+	/// the local write half of the underlying stream.
+	///
+	/// This operation is safe to call more than once.
 	pub async fn close(&self) -> Result<(), LanQRusError> {
 		// Wait for any in-progress send to finish.
 		let _send_guard = self.send_gate.lock().await;
@@ -113,7 +143,16 @@ where
 		Ok(())
 	}
 
-	/// Encrypt and send one application message.
+	/// Encrypts and sends one message.
+	///
+	/// Messages are framed internally, so the receiver gets the
+	/// original plaintext as one complete message.
+	///
+	/// Concurrent calls are serialized.
+	///
+	/// Returns an error if the connection is closed, the message
+	/// exceeds the supported size, or an I/O/cryptographic error
+	/// occurs.
 	pub async fn send(
 		&self,
 		plaintext: &[u8],
@@ -187,7 +226,13 @@ where
 		Ok(())
 	}
 
-	/// Receive one encrypted message and return its plaintext.
+	/// Receives and decrypts one message.
+	///
+	/// Waits until a complete encrypted frame arrives.
+	/// Concurrent calls are serialized.
+	///
+	/// Returns an error if the connection closes, the frame is
+	/// invalid, authentication fails, or an I/O error occurs.
 	pub async fn receive(
 		&self,
 	) -> Result<Vec<u8>, LanQRusError> {
