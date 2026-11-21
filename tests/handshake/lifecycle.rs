@@ -357,3 +357,34 @@ async fn tcp_cancelled_send_closes_connection() {
 		Err(LanQRusError::ConnectionClosed)
 	));
 }
+
+#[tokio::test]
+async fn tcp_handshake_times_out_when_peer_sends_nothing() {
+	use lanqrus::{LanQRusError, server_handshake};
+	use std::time::Duration;
+	use tokio::net::{TcpListener, TcpStream};
+
+	let listener =
+		TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+	let address = listener.local_addr().unwrap();
+
+	let server = tokio::spawn(async move {
+		let (stream, _) = listener.accept().await.unwrap();
+		server_handshake(stream).await
+	});
+
+	// Connect but deliberately send no Noise handshake data.
+	let _client =
+		TcpStream::connect(address).await.unwrap();
+
+	let result = tokio::time::timeout(
+		Duration::from_secs(35),
+		server,
+	)
+	.await
+	.expect("test itself timed out")
+	.expect("server task panicked");
+
+	assert!(matches!(result, Err(LanQRusError::Timeout)));
+}

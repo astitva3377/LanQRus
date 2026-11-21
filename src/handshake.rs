@@ -17,6 +17,7 @@ use zeroize::Zeroizing;
 
 const NOISE_PATTERN: &str =
 	"Noise_XX_25519_ChaChaPoly_BLAKE2s";
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn write_frame<S>(
 	stream: &mut S,
@@ -189,44 +190,52 @@ pub async fn client_handshake<S>(
 where
 	S: AsyncRead + AsyncWrite + Unpin,
 {
-	// Create Noise builder for selected protocol.
-	let builder =
-		snow::Builder::new(NOISE_PATTERN.parse()?);
+	timeout(HANDSHAKE_TIMEOUT, async {
+		// Create Noise builder for selected protocol.
+		let builder =
+			snow::Builder::new(NOISE_PATTERN.parse()?);
 
-	let keypair = builder.generate_keypair()?;
+		let keypair = builder.generate_keypair()?;
 
-	let mut noise =
-		snow::Builder::new(NOISE_PATTERN.parse()?)
-			.local_private_key(&keypair.private)?
-			.build_initiator()?;
-	let mut message = vec![0u8; u16::MAX as usize];
-	let mut payload = vec![0u8; u16::MAX as usize];
+		let mut noise =
+			snow::Builder::new(NOISE_PATTERN.parse()?)
+				.local_private_key(&keypair.private)?
+				.build_initiator()?;
+		let mut message = vec![0u8; u16::MAX as usize];
+		let mut payload = vec![0u8; u16::MAX as usize];
 
-	// client -> server
-	let msg_len = noise.write_message(&[], &mut message)?;
-	write_frame(&mut stream, &message[..msg_len]).await?;
+		// client -> server
+		let msg_len =
+			noise.write_message(&[], &mut message)?;
+		write_frame(&mut stream, &message[..msg_len])
+			.await?;
 
-	// server -> client
-	let response = read_frame(&mut stream).await?;
-	noise.read_message(&response, &mut payload)?;
+		// server -> client
+		let response = read_frame(&mut stream).await?;
+		noise.read_message(&response, &mut payload)?;
 
-	// client -> server
-	let msg_len = noise.write_message(&[], &mut message)?;
-	write_frame(&mut stream, &message[..msg_len]).await?;
+		// client -> server
+		let msg_len =
+			noise.write_message(&[], &mut message)?;
+		write_frame(&mut stream, &message[..msg_len])
+			.await?;
 
-	if !noise.is_handshake_finished() {
-		return Err(LanQRusError::HandshakeIncomplete);
-	}
+		if !noise.is_handshake_finished() {
+			return Err(LanQRusError::HandshakeIncomplete);
+		}
 
-	let fingerprint = create_sas(&mut noise);
+		let fingerprint = create_sas(&mut noise);
 
-	let transport = noise.into_transport_mode()?;
+		let transport = noise.into_transport_mode()?;
 
-	Ok(PendingConnection {
-		stream,
-		transport,
-		sas: fingerprint,
+		Ok(PendingConnection {
+			stream,
+			transport,
+			sas: fingerprint,
+		})
 	})
+	.await
+	.map_err(|_| LanQRusError::Timeout)?
 }
 
 pub async fn server_handshake<S>(
@@ -235,42 +244,48 @@ pub async fn server_handshake<S>(
 where
 	S: AsyncRead + AsyncWrite + Unpin,
 {
-	let builder =
-		snow::Builder::new(NOISE_PATTERN.parse()?);
+	timeout(HANDSHAKE_TIMEOUT, async {
+		let builder =
+			snow::Builder::new(NOISE_PATTERN.parse()?);
 
-	let keypair = builder.generate_keypair()?;
+		let keypair = builder.generate_keypair()?;
 
-	let mut noise =
-		snow::Builder::new(NOISE_PATTERN.parse()?)
-			.local_private_key(&keypair.private)?
-			.build_responder()?;
+		let mut noise =
+			snow::Builder::new(NOISE_PATTERN.parse()?)
+				.local_private_key(&keypair.private)?
+				.build_responder()?;
 
-	let mut payload = vec![0u8; u16::MAX as usize];
-	let mut message = vec![0u8; u16::MAX as usize];
+		let mut payload = vec![0u8; u16::MAX as usize];
+		let mut message = vec![0u8; u16::MAX as usize];
 
-	// client -> server
-	let request = read_frame(&mut stream).await?;
-	noise.read_message(&request, &mut payload)?;
+		// client -> server
+		let request = read_frame(&mut stream).await?;
+		noise.read_message(&request, &mut payload)?;
 
-	// server -> client
-	let msg_len = noise.write_message(&[], &mut message)?;
-	write_frame(&mut stream, &message[..msg_len]).await?;
+		// server -> client
+		let msg_len =
+			noise.write_message(&[], &mut message)?;
+		write_frame(&mut stream, &message[..msg_len])
+			.await?;
 
-	// client -> server
-	let request = read_frame(&mut stream).await?;
-	noise.read_message(&request, &mut payload)?;
+		// client -> server
+		let request = read_frame(&mut stream).await?;
+		noise.read_message(&request, &mut payload)?;
 
-	if !noise.is_handshake_finished() {
-		return Err(LanQRusError::HandshakeIncomplete);
-	}
+		if !noise.is_handshake_finished() {
+			return Err(LanQRusError::HandshakeIncomplete);
+		}
 
-	let fingerprint = create_sas(&mut noise);
+		let fingerprint = create_sas(&mut noise);
 
-	let transport = noise.into_transport_mode()?;
+		let transport = noise.into_transport_mode()?;
 
-	Ok(PendingConnection {
-		stream,
-		transport,
-		sas: fingerprint,
+		Ok(PendingConnection {
+			stream,
+			transport,
+			sas: fingerprint,
+		})
 	})
+	.await
+	.map_err(|_| LanQRusError::Timeout)?
 }
