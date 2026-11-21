@@ -181,29 +181,6 @@ where
 
 		Ok(connection)
 	}
-
-	pub async fn reject(self) -> Result<(), LanQRusError> {
-		let connection =
-			SecureStream::new(self.stream, self.transport);
-		connection.send(&REJECTION_MESSAGE).await?;
-
-		let peer_decision = connection.receive().await?;
-
-		match decode_control_message(&peer_decision) {
-			Some(ControlMessage::Approve)
-			| Some(ControlMessage::Reject)
-			| Some(ControlMessage::ApproveAck) => {}
-
-			_ => return Err(LanQRusError::InvalidApproval),
-		}
-
-		let ack = connection.receive().await?;
-
-		match decode_control_message(&ack) {
-			Some(ControlMessage::RejectAck) => Ok(()),
-			_ => Err(LanQRusError::InvalidApproval),
-		}
-	}
 }
 
 pub async fn client_handshake<S>(
