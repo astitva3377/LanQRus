@@ -1,0 +1,385 @@
+use lanqrus::{
+	LanQRusError, client_handshake, server_handshake,
+};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::time::sleep;
+
+#[tokio::test]
+async fn tcp_stream_closes_after_receive_failure() {
+	let listener = TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind server");
+
+	let server_address =
+		listener.local_addr().expect("server address");
+
+	let (server_result, client_result) = tokio::join!(
+		async {
+			let (socket, _) =
+				listener.accept().await.expect("accept");
+			server_handshake(socket).await
+		},
+		async {
+			let socket = TcpStream::connect(server_address)
+				.await
+				.expect("connect");
+			client_handshake(socket).await
+		}
+	);
+
+	let server_pending =
+		server_result.expect("server handshake");
+	let client_pending =
+		client_result.expect("client handshake");
+
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+
+	let client_fingerprint =
+		client_pending.sas().to_owned();
+
+	let (client_result, server_result) = tokio::join!(
+		client_pending.approve(&server_fingerprint),
+		server_pending.approve(&client_fingerprint),
+	);
+
+	let client = client_result.expect("client approval");
+	let server = server_result.expect("server approval");
+
+	drop(server);
+
+	let first_result = client.receive().await;
+
+	assert!(
+		first_result.is_err(),
+		"Receive should fail after disconnect"
+	);
+
+	let second_result = client.send(b"Pulse check").await;
+
+	assert!(
+		matches!(
+			second_result,
+			Err(LanQRusError::ConnectionClosed)
+		),
+		"Should be connection closed"
+	);
+}
+
+#[tokio::test]
+async fn tcp_explicit_close_interrupts_pending_receive() {
+	use std::sync::Arc;
+	use std::time::Duration;
+
+	let listener = TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind server");
+
+	let server_address =
+		listener.local_addr().expect("server address");
+
+	let (server_result, client_result) = tokio::join!(
+		async {
+			let (socket, _) =
+				listener.accept().await.expect("accept");
+			server_handshake(socket).await
+		},
+		async {
+			let socket = TcpStream::connect(server_address)
+				.await
+				.expect("connect");
+			client_handshake(socket).await
+		}
+	);
+
+	let server_pending =
+		server_result.expect("server handshake");
+	let client_pending =
+		client_result.expect("client handshake");
+
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+
+	let client_fingerprint =
+		client_pending.sas().to_owned();
+
+	let (client_result, server_result) = tokio::join!(
+		client_pending.approve(&server_fingerprint),
+		server_pending.approve(&client_fingerprint),
+	);
+
+	let client =
+		Arc::new(client_result.expect("client approval"));
+	let server = server_result.expect("server approval");
+
+	// Start a receive operation that should remain pending.
+	let receiving_client = Arc::clone(&client);
+
+	let receive_task = tokio::spawn(async move {
+		receiving_client.receive().await
+	});
+
+	// Give the receive task time to begin waiting for data.
+	tokio::time::sleep(Duration::from_millis(50)).await;
+
+	// Explicitly close the client connection.
+	client.close().await.expect("close connection");
+
+	// The pending receive should be woken up.
+	let receive_result = tokio::time::timeout(
+		Duration::from_secs(2),
+		receive_task,
+	)
+	.await
+	.expect("receive should not remain blocked")
+	.expect("receive task should not panic");
+
+	assert!(
+		matches!(
+			receive_result,
+			Err(LanQRusError::ConnectionClosed)
+		),
+		"Pending receive should return ConnectionClosed"
+	);
+
+	// Future operations should also be rejected.
+	let send_result = client.send(b"after close").await;
+
+	assert!(matches!(
+		send_result,
+		Err(LanQRusError::ConnectionClosed)
+	));
+
+	// Avoid an unused-variable warning and explicitly release the peer.
+	drop(server);
+}
+
+#[tokio::test]
+async fn tcp_close_prevents_subsequent_sends() {
+	use std::sync::Arc;
+
+	let listener = TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind server");
+
+	let server_address =
+		listener.local_addr().expect("server address");
+
+	let (server_result, client_result) = tokio::join!(
+		async {
+			let (socket, _) =
+				listener.accept().await.expect("accept");
+			server_handshake(socket).await
+		},
+		async {
+			let socket = TcpStream::connect(server_address)
+				.await
+				.expect("connect");
+			client_handshake(socket).await
+		}
+	);
+
+	let server_pending =
+		server_result.expect("server handshake");
+	let client_pending =
+		client_result.expect("client handshake");
+
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+
+	let client_fingerprint =
+		client_pending.sas().to_owned();
+
+	let (client_result, server_result) = tokio::join!(
+		client_pending.approve(&server_fingerprint),
+		server_pending.approve(&client_fingerprint),
+	);
+
+	let client =
+		Arc::new(client_result.expect("client approval"));
+	let server = server_result.expect("server approval");
+
+	// Close the connection.
+	client.close().await.expect("close connection");
+
+	// Sending after close must fail.
+	let result =
+		client.send(b"this must not be sent").await;
+
+	assert!(
+		matches!(
+			result,
+			Err(LanQRusError::ConnectionClosed)
+		),
+		"Sending after close must return ConnectionClosed"
+	);
+
+	drop(server);
+}
+
+#[tokio::test]
+async fn tcp_cancelled_receive_closes_connection() {
+	// Create a real TCP connection.
+	let listener =
+		TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+	let server_address = listener.local_addr().unwrap();
+
+	let (server_socket, client_socket) = tokio::join!(
+		async { listener.accept().await.unwrap().0 },
+		TcpStream::connect(server_address)
+	);
+
+	let client_socket = client_socket.unwrap();
+
+	// Perform the Noise handshake.
+	let (server_pending, client_pending) = tokio::join!(
+		server_handshake(server_socket),
+		client_handshake(client_socket)
+	);
+
+	let server_pending = server_pending.unwrap();
+	let client_pending = client_pending.unwrap();
+
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+
+	let client_fingerprint =
+		client_pending.sas().to_owned();
+
+	// Both peers approve the connection.
+	let (client_result, server_result) = tokio::join!(
+		client_pending.approve(&server_fingerprint),
+		server_pending.approve(&client_fingerprint)
+	);
+
+	let client_secure = Arc::new(client_result.unwrap());
+	let _server_secure = server_result.unwrap();
+
+	// Start receiving without sending anything from the peer.
+	let client_for_task = Arc::clone(&client_secure);
+
+	let receive_task = tokio::spawn(async move {
+		client_for_task.receive().await
+	});
+
+	// Give receive() time to acquire the reader and start waiting.
+	sleep(Duration::from_millis(100)).await;
+
+	// Cancel the receive operation.
+	receive_task.abort();
+
+	let join_error = receive_task.await.unwrap_err();
+	assert!(join_error.is_cancelled());
+
+	// The cancellation guard should have closed the connection.
+	let send_result =
+		client_secure.send(b"should not be sent").await;
+
+	assert!(matches!(
+		send_result,
+		Err(LanQRusError::ConnectionClosed)
+	));
+}
+
+#[tokio::test]
+async fn tcp_cancelled_send_closes_connection() {
+	let listener =
+		TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+	let server_address = listener.local_addr().unwrap();
+
+	let (server_socket, client_socket) = tokio::join!(
+		async { listener.accept().await.unwrap().0 },
+		TcpStream::connect(server_address)
+	);
+
+	let server_socket = server_socket;
+	let client_socket = client_socket.unwrap();
+
+	// Perform the Noise handshake.
+	let (server_pending, client_pending) = tokio::join!(
+		server_handshake(server_socket),
+		client_handshake(client_socket)
+	);
+
+	let server_pending = server_pending.unwrap();
+	let client_pending = client_pending.unwrap();
+
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+
+	let client_fingerprint =
+		client_pending.sas().to_owned();
+
+	// Approve on both sides.
+	let (client_result, server_result) = tokio::join!(
+		client_pending.approve(&server_fingerprint),
+		server_pending.approve(&client_fingerprint)
+	);
+
+	let client_secure = Arc::new(client_result.unwrap());
+	let _server_secure = server_result.unwrap();
+
+	// The server deliberately does not receive any application data.
+	let payload = vec![0xAB; u16::MAX as usize - 16];
+
+	let successful_sends = Arc::new(AtomicUsize::new(0));
+
+	let client_for_task = Arc::clone(&client_secure);
+	let sends_for_task = Arc::clone(&successful_sends);
+
+	let send_task = tokio::spawn(async move {
+		loop {
+			client_for_task.send(&payload).await?;
+			sends_for_task.fetch_add(1, Ordering::SeqCst);
+		}
+
+		#[allow(unreachable_code)]
+		Ok::<(), LanQRusError>(())
+	});
+
+	// Wait until the send task stops completing writes.
+	let mut previous_count = 0;
+	let mut stalled = false;
+
+	for _ in 0..50 {
+		tokio::time::sleep(Duration::from_millis(100))
+			.await;
+
+		let current_count =
+			successful_sends.load(Ordering::SeqCst);
+
+		if current_count == previous_count
+			&& current_count > 0
+		{
+			stalled = true;
+			break;
+		}
+
+		previous_count = current_count;
+	}
+
+	assert!(
+		stalled,
+		"send task did not become blocked by TCP backpressure"
+	);
+
+	// Cancel the blocked send.
+	send_task.abort();
+
+	let join_error = send_task.await.unwrap_err();
+	assert!(join_error.is_cancelled());
+
+	// Cancellation must have made the connection unusable.
+	let result =
+		client_secure.send(b"another message").await;
+
+	assert!(matches!(
+		result,
+		Err(LanQRusError::ConnectionClosed)
+	));
+}

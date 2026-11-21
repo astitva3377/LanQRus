@@ -1,5 +1,3 @@
-// TODO: Verify
-
 const MAGIC: [u8; 2] = *b"LQ";
 const VERSION: u8 = 1;
 
