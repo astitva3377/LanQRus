@@ -4,6 +4,7 @@ const VERSION: u8 = 1;
 const APPROVE: u8 = 1;
 const REJECT: u8 = 2;
 const REJECT_ACK: u8 = 3;
+const APPROVE_ACK: u8 = 4;
 
 pub(crate) const APPROVAL_MESSAGE: [u8; 4] =
 	[MAGIC[0], MAGIC[1], VERSION, APPROVE];
@@ -14,11 +15,15 @@ pub(crate) const REJECTION_MESSAGE: [u8; 4] =
 pub(crate) const REJECTION_ACK_MESSAGE: [u8; 4] =
 	[MAGIC[0], MAGIC[1], VERSION, REJECT_ACK];
 
+pub(crate) const APPROVAL_ACK_MESSAGE: [u8; 4] =
+	[MAGIC[0], MAGIC[1], VERSION, APPROVE_ACK];
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ControlMessage {
 	Approve,
 	Reject,
 	RejectAck,
+	ApproveAck,
 }
 
 pub(crate) fn decode_control_message(
@@ -40,6 +45,7 @@ pub(crate) fn decode_control_message(
 		APPROVE => Some(ControlMessage::Approve),
 		REJECT => Some(ControlMessage::Reject),
 		REJECT_ACK => Some(ControlMessage::RejectAck),
+		APPROVE_ACK => Some(ControlMessage::ApproveAck),
 		_ => None,
 	}
 }

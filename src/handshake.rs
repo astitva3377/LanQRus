@@ -1,6 +1,6 @@
 use crate::error::LanQRusError;
 use crate::protocol::{
-	APPROVAL_MESSAGE, ControlMessage,
+	APPROVAL_ACK_MESSAGE, APPROVAL_MESSAGE, ControlMessage,
 	REJECTION_ACK_MESSAGE, REJECTION_MESSAGE,
 	decode_control_message,
 };
@@ -100,9 +100,9 @@ where
 {
 	pub async fn approve(
 		self,
-		peer_fingerprint: &str,
+		entered_sas: &str,
 	) -> Result<SecureStream<S>, LanQRusError> {
-		let matches = self.sas == peer_fingerprint;
+		let matches = self.sas == entered_sas;
 
 		let connection =
 			SecureStream::new(self.stream, self.transport);
@@ -113,20 +113,55 @@ where
 			&REJECTION_MESSAGE
 		};
 
-		let exchange = async {
-			connection.send(decision).await?;
+		let exchange =
+			async {
+				connection.send(decision).await?;
 
-			let response = connection.receive().await?;
+				let response = connection.receive().await?;
 
-			match decode_control_message(&response) {
-				Some(ControlMessage::Approve)
-					if matches =>
-				{
+				match decode_control_message(&response) {
+				Some(ControlMessage::ApproveAck) if matches => {
 					Ok(())
 				}
 
-				Some(ControlMessage::Approve) => {
+				Some(ControlMessage::RejectAck) if !matches => {
 					Err(LanQRusError::VerificationFailed)
+				}
+
+				Some(ControlMessage::RejectAck) => {
+					Err(LanQRusError::PeerRejected)
+				}
+
+				Some(ControlMessage::ApproveAck) => {
+					Err(LanQRusError::InvalidApproval)
+				}
+
+				_ => Err(LanQRusError::InvalidApproval)
+			}
+			};
+
+		timeout(Duration::from_secs(30), exchange)
+			.await
+			.map_err(|_| LanQRusError::Timeout)??;
+
+		Ok(connection)
+	}
+
+	pub async fn wait_for_approval(
+		self,
+	) -> Result<SecureStream<S>, LanQRusError> {
+		let connection =
+			SecureStream::new(self.stream, self.transport);
+
+		let exchange = async {
+			let decision = connection.receive().await?;
+
+			match decode_control_message(&decision) {
+				Some(ControlMessage::Approve) => {
+					connection
+						.send(&APPROVAL_ACK_MESSAGE)
+						.await?;
+					Ok(())
 				}
 
 				Some(ControlMessage::Reject) => {
@@ -136,11 +171,7 @@ where
 					Err(LanQRusError::PeerRejected)
 				}
 
-				Some(ControlMessage::RejectAck) => {
-					Err(LanQRusError::InvalidApproval)
-				}
-
-				None => Err(LanQRusError::InvalidApproval),
+				_ => Err(LanQRusError::InvalidApproval),
 			}
 		};
 
@@ -160,7 +191,8 @@ where
 
 		match decode_control_message(&peer_decision) {
 			Some(ControlMessage::Approve)
-			| Some(ControlMessage::Reject) => {}
+			| Some(ControlMessage::Reject)
+			| Some(ControlMessage::ApproveAck) => {}
 
 			_ => return Err(LanQRusError::InvalidApproval),
 		}
