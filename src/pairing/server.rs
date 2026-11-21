@@ -1,4 +1,7 @@
-use crate::{ConnectionInfo, LanQRusError};
+use crate::{
+	ConnectionInfo, LanQRusError, PendingConnection,
+	handshake::server_handshake,
+};
 use if_addrs::get_if_addrs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use tokio::net::{TcpListener, TcpStream};
@@ -32,9 +35,10 @@ impl LanQRusServer {
 
 	pub async fn accept(
 		self,
-	) -> Result<TcpStream, LanQRusError> {
+	) -> Result<PendingConnection<TcpStream>, LanQRusError>
+	{
 		let (stream, _) = self.listener.accept().await?;
-		Ok(stream)
+		server_handshake(stream).await
 	}
 }
 

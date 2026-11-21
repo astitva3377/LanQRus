@@ -1,6 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr};
 
-use lanqrus::LanQRusServer;
+use lanqrus::{
+	ConnectionInfo, LanQRusClient, LanQRusServer,
+	client_handshake,
+};
 use tokio::net::TcpStream;
 
 #[tokio::test]
@@ -92,16 +95,39 @@ async fn accepts_one_client() {
 	let server = LanQRusServer::bind().await.unwrap();
 	let port = server.connection_info().address().port();
 
-	let accept_task =
+	let server_task =
 		tokio::spawn(async move { server.accept().await });
 
-	let client = TcpStream::connect(("127.0.0.1", port))
-		.await
-		.unwrap();
+	let client_stream =
+		TcpStream::connect(("127.0.0.1", port))
+			.await
+			.unwrap();
 
-	let accepted = accept_task.await.unwrap().unwrap();
+	let client_pending =
+		client_handshake(client_stream).await.unwrap();
+	let server_pending =
+		server_task.await.unwrap().unwrap();
 
-	assert!(accepted.peer_addr().is_ok());
+	assert_eq!(client_pending.sas(), server_pending.sas());
+}
 
-	drop(client);
+#[tokio::test]
+async fn client_connects_using_connection_info() {
+	let server = LanQRusServer::bind().await.unwrap();
+
+	let payload =
+		server.connection_info().to_qr_payload().unwrap();
+
+	let info =
+		ConnectionInfo::from_qr_payload(&payload).unwrap();
+
+	let server_task =
+		tokio::spawn(async move { server.accept().await });
+
+	let client_pending =
+		LanQRusClient::connect(&info).await.unwrap();
+	let server_pending =
+		server_task.await.unwrap().unwrap();
+
+	assert_eq!(client_pending.sas(), server_pending.sas());
 }
