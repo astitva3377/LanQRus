@@ -7,8 +7,52 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::sleep;
 
+async fn establish_sas() -> String {
+	let listener = TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind server");
+
+	let server_addr =
+		listener.local_addr().expect("server address");
+
+	let (server_result, client_result) = tokio::join!(
+		async {
+			let (socket, _) = listener
+				.accept()
+				.await
+				.expect("server accept");
+
+			server_handshake(socket).await
+		},
+		async {
+			let socket = TcpStream::connect(server_addr)
+				.await
+				.expect("client connect");
+
+			client_handshake(socket).await
+		}
+	);
+
+	let server_pending =
+		server_result.expect("server handshake");
+
+	let client_pending =
+		client_result.expect("client handshake");
+
+	let server_sas = server_pending.sas().to_owned();
+
+	let client_sas = client_pending.sas().to_owned();
+
+	assert_eq!(
+		server_sas, client_sas,
+		"Both endpoints must derive the same SAS"
+	);
+
+	server_sas
+}
+
 #[tokio::test]
-async fn tcp_handshake_and_encrypted_coommunication() {
+async fn tcp_handshake_and_encrypted_communication() {
 	let listener = TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind server");
@@ -41,12 +85,10 @@ async fn tcp_handshake_and_encrypted_coommunication() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	println!("Server fingerprint: {server_fingerprint}");
 	println!("Client fingerprint: {client_fingerprint}");
@@ -134,12 +176,10 @@ async fn fingerprint_mismatch_rejects_connection() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	assert_eq!(server_fingerprint, client_fingerprint);
 
@@ -201,12 +241,10 @@ async fn tcp_explicit_rejection() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	assert_eq!(server_fingerprint, client_fingerprint);
 
@@ -259,9 +297,7 @@ async fn tcp_peer_disconnects_during_approval() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let fingerprint = client_pending.sas().to_owned();
 
 	drop(server_pending);
 
@@ -307,12 +343,8 @@ async fn tcp_concurrent_sends_preserve_message_integrity() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let sprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
-	let cprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let sprint = server_pending.sas().to_owned();
+	let cprint = client_pending.sas().to_owned();
 
 	assert_eq!(sprint, cprint);
 
@@ -401,13 +433,11 @@ async fn tcp_stream_closes_after_receive_failure() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
 
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	let (client_result, server_result) = tokio::join!(
 		client_pending.approve(&server_fingerprint),
@@ -468,13 +498,11 @@ async fn tcp_explicit_close_interrupts_pending_receive() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
 
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	let (client_result, server_result) = tokio::join!(
 		client_pending.approve(&server_fingerprint),
@@ -557,13 +585,11 @@ async fn tcp_close_prevents_subsequent_sends() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
 
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	let (client_result, server_result) = tokio::join!(
 		client_pending.approve(&server_fingerprint),
@@ -616,13 +642,11 @@ async fn tcp_cancelled_receive_closes_connection() {
 	let server_pending = server_pending.unwrap();
 	let client_pending = client_pending.unwrap();
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
 
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	// Both peers approve the connection.
 	let (client_result, server_result) = tokio::join!(
@@ -683,13 +707,11 @@ async fn tcp_cancelled_send_closes_connection() {
 	let server_pending = server_pending.unwrap();
 	let client_pending = client_pending.unwrap();
 
-	let server_fingerprint = server_pending
-		.verification_fingerprint()
-		.to_owned();
+	let server_fingerprint =
+		server_pending.sas().to_owned();
 
-	let client_fingerprint = client_pending
-		.verification_fingerprint()
-		.to_owned();
+	let client_fingerprint =
+		client_pending.sas().to_owned();
 
 	// Approve on both sides.
 	let (client_result, server_result) = tokio::join!(
@@ -758,4 +780,15 @@ async fn tcp_cancelled_send_closes_connection() {
 		result,
 		Err(LanQRusError::ConnectionClosed)
 	));
+}
+
+#[tokio::test]
+async fn independent_sessions_produce_different_sas() {
+	let (sas_a, sas_b) =
+		tokio::join!(establish_sas(), establish_sas());
+
+	assert_ne!(
+		sas_a, sas_b,
+		"Independent Noise sessions should produce different SAS values"
+	);
 }

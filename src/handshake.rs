@@ -5,12 +5,15 @@ use crate::protocol::{
 	decode_control_message,
 };
 use crate::stream::SecureStream;
+use hkdf::Hkdf;
+use sha2::Sha256;
 use snow::TransportState;
 use std::time::Duration;
 use tokio::io::{
 	AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
 };
 use tokio::time::timeout;
+use zeroize::Zeroizing;
 
 const NOISE_PATTERN: &str =
 	"Noise_XX_25519_ChaChaPoly_BLAKE2s";
@@ -53,23 +56,41 @@ where
 	Ok(message)
 }
 
-fn create_fingerprint(handshake_hash: &[u8]) -> String {
-	let mut prefix = [0u8; 8];
-	prefix.copy_from_slice(&handshake_hash[..8]);
+fn create_sas(noise: &mut snow::HandshakeState) -> String {
+	let (key1, key2) = noise.dangerously_get_raw_split();
 
-	let value = u64::from_be_bytes(prefix) % 100_000_000;
+	let key1 = Zeroizing::new(key1);
+	let key2 = Zeroizing::new(key2);
+
+	let mut input_key_material = Zeroizing::new([0u8; 64]);
+
+	input_key_material[..32].copy_from_slice(&*key1);
+	input_key_material[32..].copy_from_slice(&*key2);
+
+	let hkdf = Hkdf::<Sha256>::new(
+		Some(noise.get_handshake_hash()),
+		&input_key_material[..],
+	);
+
+	let mut sas_material = Zeroizing::new([0u8; 8]);
+
+	hkdf.expand(b"lanqrus SAS v1", &mut sas_material[..])
+		.expect("8B is a valid HKDF length");
+
+	let value =
+		u64::from_be_bytes(*sas_material) % 100_000_000;
 	format!("{value:08}")
 }
 
 pub struct PendingConnection<S> {
 	pub(crate) stream: S,
 	pub(crate) transport: TransportState,
-	verification_fingerprint: String,
+	sas: String,
 }
 
 impl<S> PendingConnection<S> {
-	pub fn verification_fingerprint(&self) -> &str {
-		&self.verification_fingerprint
+	pub fn sas(&self) -> &str {
+		&self.sas
 	}
 }
 
@@ -81,8 +102,7 @@ where
 		self,
 		peer_fingerprint: &str,
 	) -> Result<SecureStream<S>, LanQRusError> {
-		let matches = self.verification_fingerprint
-			== peer_fingerprint;
+		let matches = self.sas == peer_fingerprint;
 
 		let connection =
 			SecureStream::new(self.stream, self.transport);
@@ -189,15 +209,14 @@ where
 		return Err(LanQRusError::HandshakeIncomplete);
 	}
 
-	let fingerprint =
-		create_fingerprint(noise.get_handshake_hash());
+	let fingerprint = create_sas(&mut noise);
 
 	let transport = noise.into_transport_mode()?;
 
 	Ok(PendingConnection {
 		stream,
 		transport,
-		verification_fingerprint: fingerprint,
+		sas: fingerprint,
 	})
 }
 
@@ -236,14 +255,13 @@ where
 		return Err(LanQRusError::HandshakeIncomplete);
 	}
 
-	let fingerprint =
-		create_fingerprint(noise.get_handshake_hash());
+	let fingerprint = create_sas(&mut noise);
 
 	let transport = noise.into_transport_mode()?;
 
 	Ok(PendingConnection {
 		stream,
 		transport,
-		verification_fingerprint: fingerprint,
+		sas: fingerprint,
 	})
 }
