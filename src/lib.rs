@@ -32,6 +32,7 @@
 
 mod error;
 mod handshake;
+mod pairing;
 mod protocol;
 mod stream;
 
@@ -39,4 +40,5 @@ pub use error::LanQRusError;
 pub use handshake::{
 	PendingConnection, client_handshake, server_handshake,
 };
+pub use pairing::ConnectionInfo;
 pub use stream::SecureStream;
