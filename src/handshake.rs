@@ -78,8 +78,8 @@ fn create_sas(noise: &mut snow::HandshakeState) -> String {
 		.expect("8B is a valid HKDF length");
 
 	let value =
-		u64::from_be_bytes(*sas_material) % 100_000_000;
-	format!("{value:08}")
+		u64::from_be_bytes(*sas_material) % 1_000_000;
+	format!("{value:06}")
 }
 
 pub struct PendingConnection<S> {
