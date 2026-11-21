@@ -40,5 +40,5 @@ pub use error::LanQRusError;
 pub use handshake::{
 	PendingConnection, client_handshake, server_handshake,
 };
-pub use pairing::ConnectionInfo;
+pub use pairing::{ConnectionInfo, LanQRusServer};
 pub use stream::SecureStream;
