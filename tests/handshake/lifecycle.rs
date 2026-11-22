@@ -35,15 +35,11 @@ async fn tcp_stream_closes_after_receive_failure() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint =
-		server_pending.sas().to_owned();
-
-	let client_fingerprint =
-		client_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
 
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&server_fingerprint),
-		server_pending.approve(&client_fingerprint),
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client = client_result.expect("client approval");
@@ -71,9 +67,6 @@ async fn tcp_stream_closes_after_receive_failure() {
 
 #[tokio::test]
 async fn tcp_explicit_close_interrupts_pending_receive() {
-	use std::sync::Arc;
-	use std::time::Duration;
-
 	let listener = TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind server");
@@ -100,15 +93,11 @@ async fn tcp_explicit_close_interrupts_pending_receive() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint =
-		server_pending.sas().to_owned();
-
-	let client_fingerprint =
-		client_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
 
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&server_fingerprint),
-		server_pending.approve(&client_fingerprint),
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client =
@@ -153,14 +142,11 @@ async fn tcp_explicit_close_interrupts_pending_receive() {
 		Err(LanQRusError::ConnectionClosed)
 	));
 
-	// Avoid an unused-variable warning and explicitly release the peer.
 	drop(server);
 }
 
 #[tokio::test]
 async fn tcp_close_prevents_subsequent_sends() {
-	use std::sync::Arc;
-
 	let listener = TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind server");
@@ -187,15 +173,11 @@ async fn tcp_close_prevents_subsequent_sends() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint =
-		server_pending.sas().to_owned();
-
-	let client_fingerprint =
-		client_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
 
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&server_fingerprint),
-		server_pending.approve(&client_fingerprint),
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client =
@@ -244,16 +226,12 @@ async fn tcp_cancelled_receive_closes_connection() {
 	let server_pending = server_pending.unwrap();
 	let client_pending = client_pending.unwrap();
 
-	let server_fingerprint =
-		server_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
 
-	let client_fingerprint =
-		client_pending.sas().to_owned();
-
-	// Both peers approve the connection.
+	// Client approves; server waits for the decision.
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&server_fingerprint),
-		server_pending.approve(&client_fingerprint)
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client_secure = Arc::new(client_result.unwrap());
@@ -309,16 +287,12 @@ async fn tcp_cancelled_send_closes_connection() {
 	let server_pending = server_pending.unwrap();
 	let client_pending = client_pending.unwrap();
 
-	let server_fingerprint =
-		server_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
 
-	let client_fingerprint =
-		client_pending.sas().to_owned();
-
-	// Approve on both sides.
+	// Client approves; server waits for the decision.
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&server_fingerprint),
-		server_pending.approve(&client_fingerprint)
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client_secure = Arc::new(client_result.unwrap());
@@ -382,4 +356,35 @@ async fn tcp_cancelled_send_closes_connection() {
 		result,
 		Err(LanQRusError::ConnectionClosed)
 	));
+}
+
+#[tokio::test]
+async fn tcp_handshake_times_out_when_peer_sends_nothing() {
+	use lanqrus::{LanQRusError, server_handshake};
+	use std::time::Duration;
+	use tokio::net::{TcpListener, TcpStream};
+
+	let listener =
+		TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+	let address = listener.local_addr().unwrap();
+
+	let server = tokio::spawn(async move {
+		let (stream, _) = listener.accept().await.unwrap();
+		server_handshake(stream).await
+	});
+
+	// Connect but deliberately send no Noise handshake data.
+	let _client =
+		TcpStream::connect(address).await.unwrap();
+
+	let result = tokio::time::timeout(
+		Duration::from_secs(35),
+		server,
+	)
+	.await
+	.expect("test itself timed out")
+	.expect("server task panicked");
+
+	assert!(matches!(result, Err(LanQRusError::Timeout)));
 }

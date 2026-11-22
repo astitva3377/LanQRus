@@ -17,9 +17,23 @@
 - `src/stream.rs`: encrypted message framing and `SecureStream` lifecycle.
 - `src/protocol.rs`: control-message magic, version, and control-frame decoder.
 - `src/error.rs`: public `LanQRusError` variants.
+- `src/pairing/`: LAN server, TCP client, and QR connection-info implementation.
 - `examples/client.rs` and `examples/server.rs`: operator-facing TCP examples.
 - `tests/handshake.rs`: end-to-end network, encryption, rejection, concurrency,
   cancellation, and MITM behavior tests.
+
+## Documentation
+
+- Keep README setup and quickstart instructions aligned with the runnable
+  examples and Cargo features.
+- Public API changes must update `docs/api.md`, `docs/getting-started.md`,
+  `docs/pairing.md`, and any affected protocol/security specification.
+- Wire, framing, approval, SAS, or lifecycle changes must update
+  `docs/protocol.md` and `docs/specification.md`.
+- Security behavior changes must update `docs/security.md`.
+- Do not document methods or variants that do not exist in the public API.
+- Documentation must not expose private keys, split keys, handshake state,
+  SAS derivation material, ciphertext, or plaintext.
 
 ## Rust conventions
 
@@ -52,8 +66,10 @@
 
 ## Testing
 
-- Add or update focused `#[tokio::test]` cases in `tests/handshake.rs` for
+- Add or update focused `#[tokio::test]` cases under `tests/handshake/` for
   behavior changes.
+- Add or update pairing coverage under `tests/pairing/` for connection-info
+  and LAN TCP behavior changes.
 - Reuse the existing real-TCP listener and handshake setup patterns. Avoid
   mocking cryptographic state or protocol transitions.
 - Run `cargo test --all-targets` after code changes.

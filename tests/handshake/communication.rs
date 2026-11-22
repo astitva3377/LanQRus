@@ -35,32 +35,30 @@ async fn tcp_handshake_and_encrypted_communication() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let server_fingerprint =
-		server_pending.sas().to_owned();
-	let client_fingerprint =
-		client_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
+	let client_sas = client_pending.sas().to_owned();
 
-	println!("Server fingerprint: {server_fingerprint}");
-	println!("Client fingerprint: {client_fingerprint}");
+	println!("Server SAS: {server_sas}");
+	println!("Client SAS: {client_sas}");
 
 	assert_eq!(
-		server_fingerprint, client_fingerprint,
-		"Fingerprints do not match"
+		server_sas, client_sas,
+		"SAS values do not match"
 	);
 
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&server_fingerprint),
-		server_pending.approve(&client_fingerprint),
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client =
 		client_result.expect("client approval error");
 	let server =
-		server_result.expect("Server approval error");
+		server_result.expect("server approval error");
 
-	println!("Both peers approve the connection");
+	println!("Connection approved");
 
-	// Client to Server comm
+	// Client to server communication.
 
 	let (send_result, receive_result) = tokio::join!(
 		client.send(b"Hello from client"),
@@ -78,7 +76,7 @@ async fn tcp_handshake_and_encrypted_communication() {
 		String::from_utf8_lossy(&received)
 	);
 
-	// Server to client comm
+	// Server to client communication.
 
 	let (send_result, receive_result) = tokio::join!(
 		server.send(b"Hello from server"),
@@ -131,15 +129,15 @@ async fn tcp_concurrent_sends_preserve_message_integrity() {
 	let client_pending =
 		client_result.expect("client handshake");
 
-	let sprint = server_pending.sas().to_owned();
-	let cprint = client_pending.sas().to_owned();
+	let server_sas = server_pending.sas().to_owned();
+	let client_sas = client_pending.sas().to_owned();
 
-	assert_eq!(sprint, cprint);
+	assert_eq!(server_sas, client_sas);
 
-	// Both peers approve the connection.
+	// Client approves; server waits for the decision.
 	let (client_result, server_result) = tokio::join!(
-		client_pending.approve(&sprint),
-		server_pending.approve(&cprint),
+		client_pending.approve(&server_sas),
+		server_pending.wait_for_approval(),
 	);
 
 	let client =

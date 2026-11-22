@@ -29,6 +29,10 @@ Operations are:
 - `1`: approve
 - `2`: reject
 - `3`: reject acknowledgment
+- `4`: approve acknowledgment
+
+The approved path consists of approve followed by approve acknowledgment.
+The rejected path consists of reject followed by reject acknowledgment.
 
 An approval waits up to 30 seconds for the peer decision. Any mismatch,
 invalid control frame, timeout, or peer rejection prevents the secure stream

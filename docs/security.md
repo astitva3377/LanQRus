@@ -20,6 +20,8 @@ Do not automate SAS approval from unverified network metadata.
   where a frame may have been consumed or modified.
 - Invalid approval frames and mismatched fingerprints must not establish a
   secure stream.
+- Do not add an automatic approval shortcut based on network address,
+  connection-info JSON, or SAS equality without operator review.
 
 ## Secret handling
 

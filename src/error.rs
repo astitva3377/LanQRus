@@ -2,6 +2,12 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum LanQRusError {
+	#[error("invalid connection info")]
+	InvalidConnectionInfo,
+
+	#[error("No private LAN IPv4 found")]
+	NoLANAddress,
+
 	#[error("I/O error: {0}")]
 	Io(#[from] std::io::Error),
 
